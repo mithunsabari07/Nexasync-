@@ -963,13 +963,117 @@ html, body {
 .cfg-sub { font-size:12px; color:var(--text-muted); margin-bottom:22px; line-height:1.7; }
 .cfg-err { font-size:12px; color:var(--red); margin-top:10px; }
 
+/* ═══════════════════════════════════════════
+   MOBILE BOTTOM NAV
+   ═══════════════════════════════════════════ */
+.mobile-nav {
+  display: none;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  height: 64px;
+  background: var(--surface);
+  border-top: 1.5px solid var(--border);
+  box-shadow: 0 -4px 20px rgba(22,35,85,0.10);
+  flex-direction: row;
+  align-items: stretch;
+}
+[data-theme="dark"] .mobile-nav { box-shadow: 0 -4px 20px rgba(0,0,0,0.4); }
+
+.mob-tab {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  background: none; border: none;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 10px; font-weight: 600;
+  cursor: pointer;
+  transition: color .18s, background .18s;
+  position: relative;
+  padding: 8px 4px;
+}
+.mob-tab.active { color: var(--violet); }
+.mob-tab.active::before {
+  content: '';
+  position: absolute; top: 0; left: 20%; right: 20%; height: 2px;
+  background: var(--violet);
+  border-radius: 0 0 3px 3px;
+}
+.mob-tab svg { width: 20px; height: 20px; }
+
+/* Live timer indicator on Active tab */
+.mob-live-dot {
+  position: absolute; top: 8px; right: calc(50% - 16px);
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  animation: pulse 1s infinite;
+  display: none;
+}
+.mob-live-dot.show { display: block; }
+
 /* ─── Responsive ─── */
-@media(max-width:768px) {
-  .dash-col-left { width:100%; border-right:none; }
-  #panel-dashboard { flex-direction:column; }
-  .auth-card { width:92vw; padding:28px; }
-  .timer-wrap { width:92vw; }
-  .nav-pill-group { display:none; }
+@media(max-width: 768px) {
+  /* Show bottom nav, hide top pill group */
+  .mobile-nav { display: flex; }
+  .nav-pill-group { display: none; }
+
+  /* Shrink topnav */
+  .topnav { height: 48px; padding: 0 12px; gap: 6px; }
+  .nav-brand { font-size: 14px; gap: 6px; }
+  .nav-brand-dot { width: 22px; height: 22px; font-size: 11px; }
+  .user-chip { font-size: 10px; padding: 4px 8px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .logout-btn { font-size: 10px; padding: 4px 8px; }
+  .mode-btn { width: 28px; height: 28px; font-size: 13px; }
+  .live-badge { font-size: 10px; padding: 3px 8px; }
+
+  /* App body must leave room for bottom nav */
+  .app-body { padding-bottom: 64px; }
+
+  /* Dashboard: single column stack */
+  #panel-dashboard { flex-direction: column; overflow-y: auto; }
+  .dash-col-left {
+    width: 100%; border-right: none;
+    border-bottom: 1.5px solid var(--border);
+    max-height: none; flex-shrink: 0;
+    overflow: visible;
+  }
+  .dash-col-left .scroll-pane { overflow: visible; max-height: none; }
+  .dash-col-right { flex: 1; min-height: 400px; }
+
+  /* Auth card */
+  .auth-card { width: 92vw; padding: 24px 20px; }
+  .auth-brand-name { font-size: 20px; }
+
+  /* Timer */
+  .timer-wrap { width: 92vw; }
+  .ring-wrap { width: 180px; height: 180px; }
+  .ring-wrap svg { width: 180px; height: 180px; }
+  .ring-time { font-size: 38px; }
+  .timer-task-name { font-size: 22px; }
+
+  /* Chat — messages fill better */
+  .chat-msgs { padding: 14px; }
+  .msg { max-width: 88%; }
+  .chat-head-sub { display: none; }
+  .chips { gap: 4px; }
+  .chip { font-size: 10px; padding: 4px 9px; }
+
+  /* Schedule slots */
+  .slot-time-col { width: 70px; font-size: 9px; padding: 10px 8px 10px 0; }
+  .slot-card { padding: 9px 10px; margin-left: 10px; }
+  .sc-name { font-size: 12px; }
+
+  /* Task cards */
+  .task-card { padding: 10px 11px; }
+  .tc-name { font-size: 12px; }
+
+  /* Generate bar */
+  .dash-footer { flex-wrap: wrap; gap: 6px; padding: 10px 12px; }
+  .sched-pill { margin-left: 0; }
+}
+
+@media(max-width: 380px) {
+  .user-chip { display: none; }
 }
 </style>
 </head>
@@ -1192,6 +1296,30 @@ html, body {
     </div>
 
   </div><!-- .app-body -->
+
+  <!-- MOBILE BOTTOM NAV -->
+  <nav class="mobile-nav" id="mobile-nav">
+    <button class="mob-tab active" data-p="dashboard" onclick="showPanel(this)" id="mob-tab-dashboard">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z"/>
+      </svg>
+      Dashboard
+    </button>
+    <button class="mob-tab" data-p="timer" onclick="showPanel(this)" id="mob-tab-timer">
+      <span class="mob-live-dot" id="mob-live-dot"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <circle cx="12" cy="13" r="8"/><path d="M12 8v5l3 2M12 3v2M9 2h6"/>
+      </svg>
+      Active Task
+    </button>
+    <button class="mob-tab" data-p="chat" onclick="showPanel(this)" id="mob-tab-chat">
+      <svg viewBox="0 0 24 24" fill="currentColor">
+        <path d="M20 2H4a2 2 0 00-2 2v12a2 2 0 002 2h4l4 4 4-4h4a2 2 0 002-2V4a2 2 0 00-2-2z"/>
+      </svg>
+      Chat
+    </button>
+  </nav>
+
 </div><!-- #page-app -->
 
 <!-- TOAST -->
@@ -1376,16 +1504,24 @@ async function doAuth() {
   try {
     const data = authMode === 'login' ? await fbSignIn(email, pass) : await fbSignUp(email, pass);
     if (data.error) {
+      console.error('Firebase Auth Error:', JSON.stringify(data.error));
+      const raw = data.error.message || '';
       const msgs = {
-        'EMAIL_NOT_FOUND':       'No account with that email.',
-        'INVALID_PASSWORD':      'Wrong password.',
+        'EMAIL_NOT_FOUND':           'No account with that email. Please sign up first.',
+        'INVALID_PASSWORD':          'Wrong password. Please try again.',
         'INVALID_LOGIN_CREDENTIALS': 'Invalid email or password.',
-        'EMAIL_EXISTS':          'Email already registered.',
-        'WEAK_PASSWORD : Password should be at least 6 characters': 'Password must be 6+ characters.',
-        'TOO_MANY_ATTEMPTS_TRY_LATER': 'Too many attempts. Try later.',
-        'INVALID_EMAIL':         'Invalid email format.'
+        'EMAIL_EXISTS':              'This email is already registered. Try Sign In.',
+        'TOO_MANY_ATTEMPTS_TRY_LATER': 'Too many attempts. Please try later.',
+        'INVALID_EMAIL':             'Invalid email address format.',
+        'OPERATION_NOT_ALLOWED':     'Email/Password auth is not enabled. Go to Firebase Console → Authentication → Sign-in method → Enable Email/Password.',
+        'CONFIGURATION_NOT_FOUND':   'Firebase project not configured. Go to Firebase Console → Authentication → Sign-in method → Enable Email/Password.',
+        'USER_DISABLED':             'This account has been disabled.',
       };
-      err.textContent = msgs[data.error.message] || data.error.message;
+      // Handle weak password which has extra text appended
+      let msg = msgs[raw];
+      if (!msg && raw.startsWith('WEAK_PASSWORD')) msg = 'Password must be at least 6 characters.';
+      if (!msg) msg = raw; // Show raw message if unknown
+      err.textContent = msg;
       btn.disabled = false;
       btn.textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
       return;
@@ -1409,6 +1545,9 @@ function doLogout() {
 function onLogin() {
   document.getElementById('n-user').textContent = (S.user.email.split('@')[0]).toUpperCase();
   showPage('app');
+  // Always land on Dashboard first
+  const dashBtn = document.querySelector('.nav-pill[data-p="dashboard"]') || document.querySelector('.mob-tab[data-p="dashboard"]');
+  if (dashBtn) showPanel(dashBtn);
   loadData();
   setTimeout(botWelcome, 700);
 }
@@ -1456,10 +1595,26 @@ function showPage(n) {
   document.getElementById('page-'+n).classList.add('active');
 }
 function showPanel(btn) {
+  const panelId = btn.dataset.p;
+  // Deactivate all top pills and mobile tabs
   document.querySelectorAll('.nav-pill').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.mob-tab').forEach(b => b.classList.remove('active'));
+  // Deactivate all panels
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  // Activate clicked button
   btn.classList.add('active');
-  document.getElementById('panel-'+btn.dataset.p).classList.add('active');
+  // Sync the other nav (top pill ↔ mobile tab)
+  const topPill = document.querySelector(`.nav-pill[data-p="${panelId}"]`);
+  const mobTab  = document.querySelector(`.mob-tab[data-p="${panelId}"]`);
+  if (topPill) topPill.classList.add('active');
+  if (mobTab)  mobTab.classList.add('active');
+  // Show panel
+  document.getElementById('panel-'+panelId).classList.add('active');
+  // Scroll dashboard to top on mobile when switching to it
+  if (panelId === 'dashboard') {
+    const db = document.getElementById('panel-dashboard');
+    if (db) db.scrollTop = 0;
+  }
 }
 
 // ── FIRESTORE OPS (REST) ──────────────────────────────────
@@ -1587,23 +1742,57 @@ function genSchedule() {
   recalcTime();
   if (!S.tasks.length) { toast('Add tasks first.','err'); return; }
   const pending = S.tasks.filter(t=>t.status!=='done');
-  if (!pending.length) { toast('All tasks completed!','ok'); return; }
-  const total = pending.reduce((s,t)=>s+t.plannedTime,0);
-  let mult = total > S.totalTime ? S.totalTime/total : 1;
-  if (mult < 1) toast('Tasks exceed time — schedule compressed.','');
-  const sorted = [...pending].sort((a,b)=>W[b.difficulty]-W[a.difficulty]);
+  if (!pending.length) { toast('All tasks completed! 🎉','ok'); return; }
+
+  const totalTaskMins = pending.reduce((s,t)=>s+t.plannedTime, 0);
+  const available     = S.totalTime;
+
+  // ── Weighted proportional redistribution ──────────────────
+  // Each task gets time proportional to (plannedTime × difficultyWeight)
+  // Hard tasks are protected when time is tight
+  const totalWeighted = pending.reduce((s,t) => s + t.plannedTime * W[t.difficulty], 0);
+
+  // Sort: Hard first → Intermediate → Easy (hard tasks get best time slots)
+  const sorted = [...pending].sort((a,b) => {
+    if (W[b.difficulty] !== W[a.difficulty]) return W[b.difficulty] - W[a.difficulty];
+    return b.plannedTime - a.plannedTime; // tie-break: longer task first
+  });
+
+  const compressed = totalTaskMins > available;
+  if (compressed) toast(`Tasks need ${fmtMin(totalTaskMins)} but only ${fmtMin(available)} available — redistributing proportionally.`,'');
+
   const [sh,sm] = S.startStr.split(':').map(Number);
   let cur = sh*60+sm;
+
   S.schedule = sorted.map(t => {
-    const dur = Math.max(5, Math.round(t.plannedTime*mult));
-    const start = minToStr(cur), end = minToStr(cur+dur);
+    let dur;
+    if (compressed) {
+      // Weighted redistribution: hard tasks get proportionally more of available time
+      dur = Math.max(5, Math.round((t.plannedTime * W[t.difficulty] / totalWeighted) * available));
+    } else {
+      dur = t.plannedTime; // Enough time — use exact planned durations
+    }
+    const start = minToStr(cur), end = minToStr(cur + dur);
     cur += dur;
-    return { taskId:t.id, startTime:start, endTime:end, duration:dur, status: t.status==='done'?'done': S.activeId===t.id?'active':'pending' };
+    return {
+      taskId: t.id, startTime: start, endTime: end, duration: dur,
+      status: t.status==='done' ? 'done' : S.activeId===t.id ? 'active' : 'pending'
+    };
   });
-  S.schedBuilt = true; S.remaining = S.totalTime;
+
+  S.schedBuilt = true;
+  S.remaining  = available;
   renderSchedule(); renderTasks();
   toast('Schedule generated!','ok');
-  addBot(`Schedule ready — ${sorted.length} tasks, ${fmtMin(S.totalTime)} total. Hard tasks have priority slots.`);
+
+  // Smart summary message
+  const hardCount  = sorted.filter(t=>t.difficulty==='hard').length;
+  const easyCount  = sorted.filter(t=>t.difficulty==='easy').length;
+  const schedMins  = S.schedule.reduce((s,x)=>s+x.duration, 0);
+  let summary = `Schedule ready — ${sorted.length} tasks across ${fmtMin(schedMins)}.`;
+  if (hardCount) summary += ` Hard tasks (×${hardCount}) scheduled first with priority time.`;
+  if (compressed) summary += ` Time was tight so I redistributed proportionally — hard tasks protected.`;
+  addBot(summary);
 }
 function clearSched() { S.schedule=[]; S.schedBuilt=false; renderSchedule(); renderTasks(); }
 function renderSchedule() {
@@ -1677,6 +1866,9 @@ function tick() {
   S.elapsed++;
   document.getElementById('n-live').style.display='flex';
   document.getElementById('n-time').textContent = secToHMS(S.elapsed);
+  // Show live dot on mobile active-task tab
+  const dot = document.getElementById('mob-live-dot');
+  if (dot) dot.classList.add('show');
   updateRing();
 }
 function pauseTimer()  { if (!S.running) return; clearInterval(S.timerInt); S.running=false; renderTimer(); }
@@ -1684,6 +1876,8 @@ function resumeTimer() { if (S.running||!S.activeId) return; S.running=true; S.t
 function stopTimer(finish=true) {
   clearInterval(S.timerInt); S.running=false;
   document.getElementById('n-live').style.display='none';
+  const _dot = document.getElementById('mob-live-dot');
+  if (_dot) _dot.classList.remove('show');
   const t = S.tasks.find(x=>x.id===S.activeId);
   if (t && finish) {
     const actualMins = Math.round(S.elapsed/60);
