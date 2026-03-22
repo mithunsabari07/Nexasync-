@@ -557,6 +557,58 @@ html, body {
 }
 .btn-add:hover { background:var(--violet); color:#fff; box-shadow:var(--shadow-violet); }
 
+/* Weight hint banner */
+.weight-hint {
+  font-size:11px; font-weight:500;
+  color: var(--text-muted);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--violet);
+  padding: 7px 10px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+/* Predicted time preview badge */
+.time-preview {
+  flex-shrink: 0;
+  padding: 9px 14px;
+  background: var(--violet-faint);
+  border: 1.5px solid var(--violet);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 13px; font-weight: 600;
+  color: var(--violet);
+  white-space: nowrap;
+  min-width: 64px;
+  text-align: center;
+}
+[data-theme="dark"] .time-preview { background: rgba(91,33,182,.15); }
+
+/* Schedule breakdown bar */
+.sched-breakdown {
+  display: flex; gap: 0;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 12px 0 6px;
+}
+.sched-bar-easy  { background: var(--easy);  }
+.sched-bar-inter { background: var(--inter); }
+.sched-bar-hard  { background: var(--hard);  }
+
+/* Slot time allocation label */
+.slot-alloc {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 7px;
+  background: var(--bg2);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
 /* ── Task Queue Labels ── */
 .queue-label {
   font-size:10px; font-weight:700;
@@ -1204,31 +1256,28 @@ html, body {
           <!-- Add task form -->
           <div class="add-form">
             <div class="form-title">＋ Add Task</div>
+            <div class="weight-hint">
+              Time is auto-split by priority — Easy gets ×1 share, Intermediate ×2, Hard ×3
+            </div>
             <div class="row">
               <div class="f-group grow">
                 <span class="f-label">Task Name</span>
-                <input class="f-input" type="text" id="t-name" placeholder="e.g. Mathematics" style="width:100%;"/>
+                <input class="f-input" type="text" id="t-name" placeholder="e.g. Mathematics" style="width:100%;"
+                  onkeydown="if(event.key==='Enter')addTask()"/>
               </div>
             </div>
-            <div class="row">
-              <div class="f-group">
-                <span class="f-label">Hours</span>
-                <input class="f-input" type="number" id="t-hrs" min="0" max="12" value="1"/>
-              </div>
-              <div class="f-group">
-                <span class="f-label">Mins</span>
-                <input class="f-input" type="number" id="t-mins" min="0" max="59" value="0"/>
-              </div>
+            <div class="row" style="align-items:flex-end;">
               <div class="f-group grow">
-                <span class="f-label">Difficulty</span>
+                <span class="f-label">Difficulty Level</span>
                 <div class="sel-wrap">
-                  <select class="f-select" id="t-diff">
-                    <option value="easy">Easy (×1)</option>
-                    <option value="intermediate" selected>Intermediate (×2)</option>
-                    <option value="hard">Hard (×3)</option>
+                  <select class="f-select" id="t-diff" onchange="updatePreview()">
+                    <option value="easy">🟢 Easy — ×1 weight</option>
+                    <option value="intermediate" selected>🟡 Intermediate — ×2 weight</option>
+                    <option value="hard">🔴 Hard — ×3 weight</option>
                   </select>
                 </div>
               </div>
+              <div id="t-preview" class="time-preview">—</div>
             </div>
             <button class="btn-add" onclick="addTask()">+ ADD TASK TO QUEUE</button>
           </div>
@@ -1666,6 +1715,7 @@ function recalcTime() {
   const m = parseInt(document.getElementById('i-mins').value)||0;
   S.totalTime = h*60+m; S.remaining = S.totalTime;
   S.startStr  = document.getElementById('i-start').value;
+  updatePreview(); // refresh predicted time badge
 }
 function fmtMin(m) {
   const h=Math.floor(m/60), mn=m%60;
@@ -1690,18 +1740,33 @@ function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 // ── TASK MANAGEMENT ────────────────────────────────────────
 function addTask() {
   const name = document.getElementById('t-name').value.trim();
-  const h    = parseInt(document.getElementById('t-hrs').value)||0;
-  const m    = parseInt(document.getElementById('t-mins').value)||0;
   const diff = document.getElementById('t-diff').value;
-  if (!name) { toast('Enter a task name.','err'); return; }
-  if (h*60+m <= 0) { toast('Duration must be > 0 minutes.','err'); return; }
-  S.tasks.push({ id:uid(), name, plannedTime:h*60+m, difficulty:diff, status:'pending', order:S.tasks.length });
-  document.getElementById('t-name').value='';
-  document.getElementById('t-hrs').value='1';
-  document.getElementById('t-mins').value='0';
+  if (!name) { toast('Enter a task name.', 'err'); return; }
+  // plannedTime is set to 0 — actual time is calculated by genSchedule() from total time + weights
+  S.tasks.push({ id:uid(), name, plannedTime:0, difficulty:diff, status:'pending', order:S.tasks.length });
+  document.getElementById('t-name').value = '';
   renderTasks();
+  updatePreview();
   saveTasks();
-  toast(`Added: ${name}`,'ok');
+  toast(`Added: ${name} (${DLABEL[diff]})`, 'ok');
+}
+
+// Update the "predicted time" preview badge based on current tasks + total time
+function updatePreview() {
+  const el = document.getElementById('t-preview');
+  if (!el) return;
+  const diff = document.getElementById('t-diff')?.value || 'intermediate';
+  const totalMins = S.totalTime || (
+    (parseInt(document.getElementById('i-hrs')?.value)||0)*60 +
+    (parseInt(document.getElementById('i-mins')?.value)||0)
+  );
+  if (!totalMins) { el.textContent = '—'; return; }
+  // All pending tasks + this hypothetical new one
+  const allDiffs = [...S.tasks.filter(t=>t.status!=='done').map(t=>t.difficulty), diff];
+  const totalW = allDiffs.reduce((s,d) => s + W[d], 0);
+  const myW    = W[diff];
+  const myMins = totalW > 0 ? Math.round((myW / totalW) * totalMins) : totalMins;
+  el.textContent = fmtMin(myMins);
 }
 function delTask(id) {
   if (S.activeId===id) { toast('Cannot delete an active task.','err'); return; }
@@ -1717,7 +1782,7 @@ function renderTasks() {
   }
   el.innerHTML = S.tasks.map(t => {
     const s  = S.schedule.find(x=>x.taskId===t.id);
-    const tm = s ? `${s.startTime} – ${s.endTime}` : fmtMin(t.plannedTime);
+    const tm = s ? `${s.startTime} – ${s.endTime}  (${fmtMin(s.duration)})` : (t.plannedTime > 0 ? fmtMin(t.plannedTime) : 'auto');
     const ia = S.activeId===t.id, id = t.status==='done';
     return `<div class="task-card ${DCLASS[t.difficulty]} ${ia?'tc-active':''} ${id?'tc-done':''}">
       <span class="tc-dot dot-${ia?'active':id?'done':'pending'}"></span>
@@ -1740,59 +1805,78 @@ function renderTasks() {
 // ── SCHEDULE ENGINE ────────────────────────────────────────
 function genSchedule() {
   recalcTime();
-  if (!S.tasks.length) { toast('Add tasks first.','err'); return; }
-  const pending = S.tasks.filter(t=>t.status!=='done');
-  if (!pending.length) { toast('All tasks completed! 🎉','ok'); return; }
+  if (!S.tasks.length) { toast('Add tasks first.', 'err'); return; }
 
-  const totalTaskMins = pending.reduce((s,t)=>s+t.plannedTime, 0);
-  const available     = S.totalTime;
+  const pending = S.tasks.filter(t => t.status !== 'done');
+  if (!pending.length) { toast('All tasks completed! 🎉', 'ok'); return; }
+  if (S.totalTime <= 0) { toast('Set your available time first.', 'err'); return; }
 
-  // ── Weighted proportional redistribution ──────────────────
-  // Each task gets time proportional to (plannedTime × difficultyWeight)
-  // Hard tasks are protected when time is tight
-  const totalWeighted = pending.reduce((s,t) => s + t.plannedTime * W[t.difficulty], 0);
+  // ── PURE WEIGHT-BASED TIME SPLIT ──────────────────────────
+  // Each task gets: (its_weight / total_weight) × total_available_time
+  // Easy=1, Intermediate=2, Hard=3
+  // Example: 3h, 1 Easy + 1 Inter + 1 Hard
+  //   totalWeight = 1+2+3 = 6
+  //   Easy  → 1/6 × 180 = 30 min
+  //   Inter → 2/6 × 180 = 60 min
+  //   Hard  → 3/6 × 180 = 90 min
 
-  // Sort: Hard first → Intermediate → Easy (hard tasks get best time slots)
-  const sorted = [...pending].sort((a,b) => {
+  const totalWeight = pending.reduce((s, t) => s + W[t.difficulty], 0);
+
+  // Sort: Hard → Intermediate → Easy (best focus time for hardest tasks)
+  const sorted = [...pending].sort((a, b) => {
     if (W[b.difficulty] !== W[a.difficulty]) return W[b.difficulty] - W[a.difficulty];
-    return b.plannedTime - a.plannedTime; // tie-break: longer task first
+    return a.name.localeCompare(b.name); // alphabetical tie-break
   });
 
-  const compressed = totalTaskMins > available;
-  if (compressed) toast(`Tasks need ${fmtMin(totalTaskMins)} but only ${fmtMin(available)} available — redistributing proportionally.`,'');
-
-  const [sh,sm] = S.startStr.split(':').map(Number);
-  let cur = sh*60+sm;
-
-  S.schedule = sorted.map(t => {
-    let dur;
-    if (compressed) {
-      // Weighted redistribution: hard tasks get proportionally more of available time
-      dur = Math.max(5, Math.round((t.plannedTime * W[t.difficulty] / totalWeighted) * available));
+  // Assign weighted time to each task
+  let allocated = 0;
+  const allocations = sorted.map((t, i) => {
+    let mins;
+    if (i === sorted.length - 1) {
+      mins = S.totalTime - allocated; // last task gets remainder to avoid rounding loss
     } else {
-      dur = t.plannedTime; // Enough time — use exact planned durations
+      mins = Math.round((W[t.difficulty] / totalWeight) * S.totalTime);
     }
-    const start = minToStr(cur), end = minToStr(cur + dur);
-    cur += dur;
+    mins = Math.max(5, mins); // minimum 5 mins per task
+    allocated += mins;
+    return { task: t, mins };
+  });
+
+  // Build timeline
+  const [sh, sm] = S.startStr.split(':').map(Number);
+  let cur = sh * 60 + sm;
+
+  S.schedule = allocations.map(({ task: t, mins }) => {
+    // Update task's plannedTime to the allocated amount
+    const taskRef = S.tasks.find(x => x.id === t.id);
+    if (taskRef) taskRef.plannedTime = mins;
+
+    const start = minToStr(cur), end = minToStr(cur + mins);
+    cur += mins;
     return {
-      taskId: t.id, startTime: start, endTime: end, duration: dur,
-      status: t.status==='done' ? 'done' : S.activeId===t.id ? 'active' : 'pending'
+      taskId: t.id, startTime: start, endTime: end, duration: mins,
+      status: S.activeId === t.id ? 'active' : 'pending'
     };
   });
 
   S.schedBuilt = true;
-  S.remaining  = available;
-  renderSchedule(); renderTasks();
-  toast('Schedule generated!','ok');
+  S.remaining  = S.totalTime;
 
-  // Smart summary message
-  const hardCount  = sorted.filter(t=>t.difficulty==='hard').length;
-  const easyCount  = sorted.filter(t=>t.difficulty==='easy').length;
-  const schedMins  = S.schedule.reduce((s,x)=>s+x.duration, 0);
-  let summary = `Schedule ready — ${sorted.length} tasks across ${fmtMin(schedMins)}.`;
-  if (hardCount) summary += ` Hard tasks (×${hardCount}) scheduled first with priority time.`;
-  if (compressed) summary += ` Time was tight so I redistributed proportionally — hard tasks protected.`;
-  addBot(summary);
+  renderSchedule();
+  renderTasks();
+  saveTasks();
+
+  // Smart confirmation message
+  const lines = allocations.map(({ task: t, mins }) =>
+    `  ${t.name} (${DLABEL[t.difficulty]}) → ${fmtMin(mins)}`
+  ).join('
+');
+  addBot(`Schedule generated for ${fmtMin(S.totalTime)}:
+
+${lines}
+
+Hard tasks scheduled first. I'll automatically adjust if you finish early or run over time.`);
+  toast('Schedule generated!', 'ok');
 }
 function clearSched() { S.schedule=[]; S.schedBuilt=false; renderSchedule(); renderTasks(); }
 function renderSchedule() {
@@ -1825,29 +1909,70 @@ function renderSchedule() {
 
 // ── ADAPTIVE ENGINE ────────────────────────────────────────
 function redistribute(newRem) {
-  const pending = S.tasks.filter(t=>t.status==='pending'&&t.id!==S.activeId);
+  // Re-split remaining time among pending tasks using same weight formula
+  const pending = S.tasks.filter(t => t.status === 'pending' && t.id !== S.activeId);
   if (!pending.length) return;
-  const totalW = pending.reduce((s,t)=>s+t.plannedTime*W[t.difficulty],0);
-  const actSlot = S.schedule.find(x=>x.taskId===S.activeId);
-  let cur = actSlot ? strToMin(actSlot.endTime) : strToMin(S.startStr);
-  const sorted = [...pending].sort((a,b)=>W[b.difficulty]-W[a.difficulty]);
-  sorted.forEach(t => {
-    const dur = totalW>0 ? Math.max(5, Math.round((t.plannedTime*W[t.difficulty]/totalW)*newRem)) : Math.max(5,Math.round(newRem/sorted.length));
-    const sl = S.schedule.find(x=>x.taskId===t.id);
-    if (sl) { sl.startTime=minToStr(cur); sl.endTime=minToStr(cur+dur); sl.duration=dur; }
-    cur += dur;
+  if (newRem <= 0) { toast('No remaining time to redistribute!', 'err'); return; }
+
+  const totalWeight = pending.reduce((s, t) => s + W[t.difficulty], 0);
+
+  // Sort Hard → Inter → Easy
+  const sorted = [...pending].sort((a, b) => W[b.difficulty] - W[a.difficulty]);
+
+  // Find where to start (after active task ends, or after last done task)
+  const activeSlot = S.schedule.find(x => x.taskId === S.activeId);
+  let cur = activeSlot ? strToMin(activeSlot.endTime) : strToMin(S.startStr);
+
+  // Also account for already-done task slots before the active one
+  if (!activeSlot) {
+    const doneSlots = S.schedule.filter(x => {
+      const t = S.tasks.find(tt => tt.id === x.taskId);
+      return t && t.status === 'done';
+    });
+    if (doneSlots.length) {
+      const lastDone = doneSlots[doneSlots.length - 1];
+      cur = strToMin(lastDone.endTime);
+    }
+  }
+
+  let allocated = 0;
+  sorted.forEach((t, i) => {
+    let mins;
+    if (i === sorted.length - 1) {
+      mins = Math.max(5, newRem - allocated);
+    } else {
+      mins = Math.max(5, Math.round((W[t.difficulty] / totalWeight) * newRem));
+    }
+    allocated += mins;
+
+    // Update plannedTime
+    const taskRef = S.tasks.find(x => x.id === t.id);
+    if (taskRef) taskRef.plannedTime = mins;
+
+    // Update or create slot
+    let sl = S.schedule.find(x => x.taskId === t.id);
+    if (sl) {
+      sl.startTime = minToStr(cur);
+      sl.endTime   = minToStr(cur + mins);
+      sl.duration  = mins;
+    }
+    cur += mins;
   });
-  renderSchedule(); renderTasks();
+
+  renderSchedule();
+  renderTasks();
 }
 function loseTime(mins) {
-  S.remaining = Math.max(0, S.remaining-mins);
+  S.remaining = Math.max(0, S.remaining - mins);
+  S.totalTime = S.remaining; // update base so ring % is accurate
   redistribute(S.remaining);
-  toast(`−${fmtMin(mins)} removed. Schedule updated.`,'');
+  toast(`−${fmtMin(mins)} removed. Redistributed by priority.`, '');
 }
 function gainTime(mins) {
   S.remaining += mins;
+  S.totalTime = S.remaining;
   redistribute(S.remaining);
-  toast(`+${fmtMin(mins)} added. Hard tasks get more time.`,'ok');
+  toast(`+${fmtMin(mins)} added. Hard tasks get priority.`, 'ok');
 }
 
 // ── TIMER ENGINE ───────────────────────────────────────────
@@ -1881,17 +2006,24 @@ function stopTimer(finish=true) {
   const t = S.tasks.find(x=>x.id===S.activeId);
   if (t && finish) {
     const actualMins = Math.round(S.elapsed/60);
-    const diff = t.plannedTime - actualMins;
-    t.status='done';
-    const sl = S.schedule.find(x=>x.taskId===t.id);
-    if (sl) sl.status='done';
-    S.remaining += diff;
-    if (diff!==0) redistribute(Math.max(0,S.remaining));
-    saveSession(t.id, S.elapsed); saveTasks();
-    const msg = diff>0 ? `"${t.name}" done ${fmtMin(diff)} early! Time redistributed to remaining tasks.`
-               : diff<0 ? `"${t.name}" went ${fmtMin(-diff)} overtime. Remaining tasks compressed.`
-               : `"${t.name}" completed on time. `;
-    toast(msg,'ok'); addBot(`✓ ${msg}`);
+    const diff = t.plannedTime - actualMins; // positive = finished early, negative = overtime
+    t.status = 'done';
+    const sl = S.schedule.find(x => x.taskId === t.id);
+    if (sl) sl.status = 'done';
+    // Give back or take extra time
+    S.remaining = Math.max(0, S.remaining + diff);
+    if (diff !== 0 && S.remaining > 0) {
+      redistribute(S.remaining); // re-split remaining time by weights
+    }
+    saveSession(t.id, S.elapsed);
+    saveTasks();
+    const msg = diff > 0
+      ? `"${t.name}" done ${fmtMin(diff)} early! ${fmtMin(S.remaining)} redistributed to remaining tasks by priority.`
+      : diff < 0
+        ? `"${t.name}" took ${fmtMin(-diff)} extra. Remaining tasks adjusted by priority.`
+        : `"${t.name}" completed exactly on time!`;
+    toast(msg, 'ok');
+    addBot(`✓ ${msg}`);
   }
   S.activeId=null; S.elapsed=0; S.timerStart=null;
   renderTasks(); renderSchedule(); renderTimer();
