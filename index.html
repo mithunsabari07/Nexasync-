@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
 <title>StudyCore — Intelligent Study Assistant</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet"/>
 <style>
@@ -224,27 +227,35 @@ html, body {
   margin-bottom: 28px;
 }
 .tab-row {
-  display:flex; gap:3px;
+  display:flex; gap:0;
   background: var(--bg2);
-  padding: 3px;
+  border: 1.5px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 24px;
+  overflow: hidden;
 }
 .tab-btn {
-  flex:1; padding:8px 0;
-  background:none; border:none;
+  flex:1; padding:13px 8px;
+  background: none; border: none;
   font-family: var(--font);
-  font-size:13px; font-weight:600;
+  font-size:14px; font-weight:600;
   color: var(--text-muted);
   cursor:pointer;
-  border-radius: calc(var(--radius) - 1px);
-  transition: all .18s;
+  transition: all .2s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  min-height: 48px; /* iOS minimum touch target */
 }
+.tab-btn:not(.active):active { background: var(--border); }
 .tab-btn.active {
-  background: var(--surface);
-  color: var(--violet);
-  box-shadow: var(--shadow-sm);
+  background: var(--violet);
+  color: #ffffff;
+  font-weight: 700;
 }
+/* Divider between tabs */
+.tab-btn:first-child { border-right: 1.5px solid var(--border); }
 
 .field { margin-bottom:14px; }
 .field-label {
@@ -1167,8 +1178,12 @@ html, body {
     </div>
     <div class="auth-sub">Your intelligent, adaptive study system</div>
     <div class="tab-row">
-      <button class="tab-btn active" id="tab-login" onclick="setTab('login')">Sign In</button>
-      <button class="tab-btn"        id="tab-signup" onclick="setTab('signup')">Create Account</button>
+      <button class="tab-btn active" id="tab-login"
+        onclick="setTab('login')"
+        ontouchend="setTab('login');event.preventDefault()">Sign In</button>
+      <button class="tab-btn" id="tab-signup"
+        onclick="setTab('signup')"
+        ontouchend="setTab('signup');event.preventDefault()">Create Account</button>
     </div>
     <div class="field">
       <label class="field-label">Email Address</label>
@@ -1178,7 +1193,8 @@ html, body {
       <label class="field-label">Password</label>
       <input class="field-input" type="password" id="a-pass" placeholder="••••••••" autocomplete="current-password"/>
     </div>
-    <button class="btn-cta" id="a-btn" onclick="doAuth()">Sign In</button>
+    <button class="btn-cta" id="a-btn" onclick="doAuth()"
+      ontouchend="doAuth();event.preventDefault()">Sign In</button>
     <div id="auth-err"></div>
     <div class="auth-footer">
       <span style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:5px;">
@@ -1297,7 +1313,11 @@ html, body {
           <span class="col-head-badge" id="sched-pill">No schedule</span>
         </div>
         <div class="schedule-body" id="sched-body">
-          <div class="empty"><div class="empty-icon">🗓</div><div class="empty-text">Schedule will appear here<br/>after generation.</div></div>
+          <div class="empty" id="sched-empty">
+            <div class="empty-icon">🗓</div>
+            <div class="empty-text">Hit <b>Generate Schedule</b> below<br/>to split your time by priority.</div>
+            <div id="sched-preview-wrap" style="display:none;margin-top:16px;width:100%;max-width:320px;"></div>
+          </div>
         </div>
         <div class="dash-footer">
           <button class="btn-ghost green" onclick="genSchedule()">▶ Generate Schedule</button>
@@ -1537,9 +1557,23 @@ async function fsDelete(path) {
 let authMode = 'login';
 function setTab(m) {
   authMode = m;
-  document.getElementById('tab-login').classList.toggle('active', m==='login');
-  document.getElementById('tab-signup').classList.toggle('active', m==='signup');
-  document.getElementById('a-btn').textContent = m==='login' ? 'Sign In' : 'Create Account';
+  // Remove active from both, add to correct one
+  const tLogin  = document.getElementById('tab-login');
+  const tSignup = document.getElementById('tab-signup');
+  const aBtn    = document.getElementById('a-btn');
+  if (!tLogin || !tSignup || !aBtn) return;
+  tLogin.classList.remove('active');
+  tSignup.classList.remove('active');
+  if (m === 'login') {
+    tLogin.classList.add('active');
+    aBtn.textContent = 'Sign In';
+  } else {
+    tSignup.classList.add('active');
+    aBtn.textContent = 'Create Account';
+  }
+  // Clear any previous error when switching tabs
+  const errEl = document.getElementById('auth-err');
+  if (errEl) errEl.textContent = '';
 }
 async function doAuth() {
   const email = document.getElementById('a-email').value.trim();
@@ -1703,9 +1737,20 @@ async function loadData() {
     const docs = await fsList(`users/${FB_UID}/tasks`);
     S.tasks = docs.map(doc => fromDoc(doc))
                   .sort((a,b) => (a.order||0) - (b.order||0));
+    // ── MIGRATE: reset any old fixed plannedTime values to 0
+    // (old version stored user-entered hours; new version auto-calculates)
+    let needsSave = false;
+    S.tasks.forEach(t => {
+      if (t.plannedTime > 0 && !S.schedBuilt) {
+        t.plannedTime = 0; // will be recalculated by genSchedule()
+        needsSave = true;
+      }
+    });
+    if (needsSave) saveTasks();
     renderTasks();
-    if (S.schedBuilt || S.tasks.length) renderSchedule();
-    toast('Data loaded', 'ok');
+    updatePreview();
+    renderSchedule();
+    toast('Tasks loaded', 'ok');
   } catch(e) { /* No data yet — silent */ }
 }
 
@@ -1715,7 +1760,8 @@ function recalcTime() {
   const m = parseInt(document.getElementById('i-mins').value)||0;
   S.totalTime = h*60+m; S.remaining = S.totalTime;
   S.startStr  = document.getElementById('i-start').value;
-  updatePreview(); // refresh predicted time badge
+  updatePreview();
+  renderSchedule(); // refresh live weight preview in schedule column
 }
 function fmtMin(m) {
   const h=Math.floor(m/60), mn=m%60;
@@ -1746,6 +1792,7 @@ function addTask() {
   S.tasks.push({ id:uid(), name, plannedTime:0, difficulty:diff, status:'pending', order:S.tasks.length });
   document.getElementById('t-name').value = '';
   renderTasks();
+  renderSchedule(); // refresh weight preview
   updatePreview();
   saveTasks();
   toast(`Added: ${name} (${DLABEL[diff]})`, 'ok');
@@ -1780,9 +1827,21 @@ function renderTasks() {
     el.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">No tasks yet.<br/>Add tasks above.</div></div>`;
     return;
   }
+  // Calculate weight-predicted time for each task (works even without schedule)
+  const pendingForCalc = S.tasks.filter(t2 => t2.status !== 'done');
+  const totalW4calc    = pendingForCalc.reduce((s, t2) => s + W[t2.difficulty], 0);
+
   el.innerHTML = S.tasks.map(t => {
-    const s  = S.schedule.find(x=>x.taskId===t.id);
-    const tm = s ? `${s.startTime} – ${s.endTime}  (${fmtMin(s.duration)})` : (t.plannedTime > 0 ? fmtMin(t.plannedTime) : 'auto');
+    const s  = S.schedule.find(x => x.taskId === t.id);
+    let tm;
+    if (s && s.duration > 0) {
+      tm = `${s.startTime} – ${s.endTime}`;
+    } else if (S.totalTime > 0 && totalW4calc > 0 && t.status !== 'done') {
+      const predicted = Math.round((W[t.difficulty] / totalW4calc) * S.totalTime);
+      tm = `~${fmtMin(predicted)} (×${W[t.difficulty]} weight)`;
+    } else {
+      tm = 'auto';
+    }
     const ia = S.activeId===t.id, id = t.status==='done';
     return `<div class="task-card ${DCLASS[t.difficulty]} ${ia?'tc-active':''} ${id?'tc-done':''}">
       <span class="tc-dot dot-${ia?'active':id?'done':'pending'}"></span>
@@ -1869,13 +1928,8 @@ function genSchedule() {
   // Smart confirmation message
   const lines = allocations.map(({ task: t, mins }) =>
     `  ${t.name} (${DLABEL[t.difficulty]}) → ${fmtMin(mins)}`
-  ).join('
-');
-  addBot(`Schedule generated for ${fmtMin(S.totalTime)}:
-
-${lines}
-
-Hard tasks scheduled first. I'll automatically adjust if you finish early or run over time.`);
+  ).join('\n');
+  addBot('Schedule generated for ' + fmtMin(S.totalTime) + ':\n\n' + lines + '\n\nHard tasks scheduled first. I will automatically adjust if you finish early or run over time.');
   toast('Schedule generated!', 'ok');
 }
 function clearSched() { S.schedule=[]; S.schedBuilt=false; renderSchedule(); renderTasks(); }
@@ -1883,25 +1937,114 @@ function renderSchedule() {
   const el   = document.getElementById('sched-body');
   const pill = document.getElementById('sched-pill');
   const info = document.getElementById('sched-info');
-  if (!S.schedule.length) {
-    el.innerHTML = `<div class="empty"><div class="empty-icon">🗓</div><div class="empty-text">Schedule will appear here<br/>after generation.</div></div>`;
-    pill.innerHTML = 'No schedule'; return;
+
+  // Show live weight-preview in empty state even before generation
+  const preWrap = document.getElementById('sched-preview-wrap');
+  if (preWrap && S.tasks.length > 0 && S.totalTime > 0) {
+    const pending   = S.tasks.filter(t => t.status !== 'done');
+    const totalW    = pending.reduce((s, t) => s + W[t.difficulty], 0);
+    if (totalW > 0) {
+      const rows = pending
+        .sort((a,b) => W[b.difficulty] - W[a.difficulty])
+        .map(t => {
+          const mins = Math.round((W[t.difficulty] / totalW) * S.totalTime);
+          const pct  = Math.round((W[t.difficulty] / totalW) * 100);
+          const cls  = {easy:'tag-easy',intermediate:'tag-inter',hard:'tag-hard'}[t.difficulty];
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+            <span style="font-weight:600;font-size:13px;">${esc(t.name)}</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="diff-tag ${cls}">${DLABEL[t.difficulty]}</span>
+              <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--violet);">${fmtMin(mins)}</span>
+              <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);">${pct}%</span>
+            </div>
+          </div>`;
+        }).join('');
+      preWrap.style.display = 'block';
+      preWrap.innerHTML = `
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+          Preview — ${fmtMin(S.totalTime)} split by weight
+        </div>
+        ${rows}
+        <button class="btn-ghost green" onclick="genSchedule()" style="width:100%;margin-top:12px;padding:11px;">
+          ▶ Generate This Schedule
+        </button>`;
+    }
+  } else if (preWrap) {
+    preWrap.style.display = 'none';
   }
-  const done = S.schedule.filter(s=>s.status==='done').length;
-  const tot  = S.schedule.length;
-  const mins = S.schedule.reduce((s,x)=>s+x.duration,0);
+
+  if (!S.schedule.length) {
+    el.innerHTML = `<div class="empty" id="sched-empty">
+      <div class="empty-icon">🗓</div>
+      <div class="empty-text">Hit <b>Generate Schedule</b> below<br/>to split your time by priority.</div>
+      <div id="sched-preview-wrap" style="display:none;margin-top:16px;width:100%;max-width:320px;"></div>
+    </div>`;
+    pill.innerHTML = 'No schedule';
+    info.innerHTML = '<b>—</b>';
+    // Re-populate preview in fresh empty state
+    const freshWrap = document.getElementById('sched-preview-wrap');
+    if (freshWrap && S.tasks.length > 0 && S.totalTime > 0) {
+      const pending = S.tasks.filter(t => t.status !== 'done');
+      const totalW  = pending.reduce((s,t) => s + W[t.difficulty], 0);
+      if (totalW > 0) {
+        const rows = pending.sort((a,b)=>W[b.difficulty]-W[a.difficulty]).map(t => {
+          const mins = Math.round((W[t.difficulty]/totalW)*S.totalTime);
+          const pct  = Math.round((W[t.difficulty]/totalW)*100);
+          const cls  = {easy:'tag-easy',intermediate:'tag-inter',hard:'tag-hard'}[t.difficulty];
+          return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+            <span style="font-weight:600;font-size:13px;">${esc(t.name)}</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="diff-tag ${cls}">${DLABEL[t.difficulty]}</span>
+              <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--violet);">${fmtMin(mins)}</span>
+              <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted);">${pct}%</span>
+            </div>
+          </div>`;
+        }).join('');
+        freshWrap.style.display = 'block';
+        freshWrap.innerHTML = `
+          <div style="font-size:11px;font-weight:700;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+            Preview — ${fmtMin(S.totalTime)} split by weight
+          </div>
+          ${rows}
+          <button class="btn-ghost green" onclick="genSchedule()" style="width:100%;margin-top:12px;padding:11px;">
+            ▶ Generate This Schedule
+          </button>`;
+      }
+    }
+    return;
+  }
+
+  // Build breakdown bar + summary
+  const done    = S.schedule.filter(s => s.status === 'done').length;
+  const tot     = S.schedule.length;
+  const totMins = S.schedule.reduce((s,x) => s + x.duration, 0);
   pill.innerHTML = `${done}/${tot} done`;
-  info.innerHTML = `<b>${done}/${tot}</b> · ${fmtMin(mins)}`;
+  info.innerHTML = `<b>${done}/${tot}</b> · ${fmtMin(totMins)}`;
+
+  // Build slot list with visual time bar
   el.innerHTML = S.schedule.map(sl => {
-    const t = S.tasks.find(x=>x.id===sl.taskId); if (!t) return '';
-    const ia = S.activeId===sl.taskId;
-    const sc = ia?'sc-active': t.status==='done'?'sc-done':SCLS[t.difficulty];
+    const t = S.tasks.find(x => x.id === sl.taskId);
+    if (!t) return '';
+    const ia  = S.activeId === sl.taskId;
+    const sc  = ia ? 'sc-active' : (t.status === 'done' ? 'sc-done' : SCLS[t.difficulty]);
+    const pct = totMins > 0 ? Math.round((sl.duration / totMins) * 100) : 0;
+    const barColor = {easy:'var(--easy)',intermediate:'var(--inter)',hard:'var(--hard)'}[t.difficulty];
     return `<div class="schedule-slot">
       <div class="slot-time-col">${sl.startTime}<br/><span class="slot-end">${sl.endTime}</span></div>
       <div class="slot-card ${sc}">
-        <span class="sc-name">${esc(t.name)}</span>
-        <span class="diff-tag ${DTAG[t.difficulty]}">${DLABEL[t.difficulty]}</span>
-        <span class="sc-dur">${fmtMin(sl.duration)}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+            <span class="sc-name">${esc(t.name)}</span>
+            <span class="diff-tag ${DTAG[t.difficulty]}">${DLABEL[t.difficulty]}</span>
+          </div>
+          <div style="height:4px;background:var(--border2);border-radius:2px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:${barColor};border-radius:2px;"></div>
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div class="sc-dur" style="font-size:13px;font-weight:700;color:var(--violet);">${fmtMin(sl.duration)}</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text-muted);">${pct}% of total</div>
+        </div>
       </div>
     </div>`;
   }).join('');
