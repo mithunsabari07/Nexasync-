@@ -1025,7 +1025,10 @@ html, body {
     <button class="btn-cta" id="a-btn" onclick="doAuth()">Sign In</button>
     <div id="auth-err"></div>
     <div class="auth-footer">
-      <button class="btn-ghost" style="font-size:12px;" onclick="openCfg()">⚙ Configure Firebase</button>
+      <span style="font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:5px;">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;"></span>
+        Connected · nexasync · Secured by Firebase
+      </span>
     </div>
   </div>
 </div>
@@ -1194,10 +1197,7 @@ html, body {
 <!-- TOAST -->
 <div id="toast"></div>
 
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+<!-- No external SDK needed — using Firebase REST API directly -->
 
 <script>
 /* ═══════════════════════════════════════════════════════════
@@ -1227,55 +1227,136 @@ const S = {
   schedBuilt: false
 };
 
-// ── FIREBASE ───────────────────────────────────────────────
-let db = null, auth = null;
+// ═══════════════════════════════════════════════════════════
+// FIREBASE REST API — No SDK, no CDN, works from file://
+// Uses Firebase Auth REST + Firestore REST directly via fetch()
+// ═══════════════════════════════════════════════════════════
+const FB = {
+  apiKey:    "AIzaSyCY4TEfISmEsOGRQCF7ich82ZPnwZw9-Ac",
+  projectId: "nexasync-73a38",
+  authUrl:   "https://identitytoolkit.googleapis.com/v1",
+  fsUrl:     "https://firestore.googleapis.com/v1"
+};
 
-function fbInit(cfg) {
+// Token storage
+let FB_TOKEN    = null;  // Firebase ID token
+let FB_REFRESH  = null;  // Refresh token
+let FB_UID      = null;  // User UID
+let FB_EMAIL    = null;  // User email
+let TOKEN_TIMER = null;
+
+function fbSaveSession(token, refresh, uid, email) {
+  FB_TOKEN = token; FB_REFRESH = refresh; FB_UID = uid; FB_EMAIL = email;
+  localStorage.setItem('fb_session', JSON.stringify({token, refresh, uid, email}));
+  // Auto-refresh token every 55 minutes
+  if (TOKEN_TIMER) clearInterval(TOKEN_TIMER);
+  TOKEN_TIMER = setInterval(fbRefreshToken, 55 * 60 * 1000);
+}
+function fbClearSession() {
+  FB_TOKEN = FB_REFRESH = FB_UID = FB_EMAIL = null;
+  localStorage.removeItem('fb_session');
+  if (TOKEN_TIMER) clearInterval(TOKEN_TIMER);
+}
+async function fbRefreshToken() {
+  if (!FB_REFRESH) return;
   try {
-    if (firebase.apps.length) firebase.apps.forEach(a => a.delete());
-    firebase.initializeApp(cfg);
-    db = firebase.firestore();
-    auth = firebase.auth();
-    auth.onAuthStateChanged(u => {
-      if (u) { S.user = u; onLogin(u); }
-      else   { S.user = null; showPage('auth'); }
+    const r = await fetch(`https://securetoken.googleapis.com/v1/token?key=${FB.apiKey}`, {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: `grant_type=refresh_token&refresh_token=${FB_REFRESH}`
     });
-    return true;
-  } catch(e) { return false; }
-}
-(function auto() {
-  const s = localStorage.getItem('sc_cfg');
-  if (s) try { fbInit(JSON.parse(s)); } catch(e) {}
-})();
-
-// ── CONFIG MODAL ───────────────────────────────────────────
-function openCfg() {
-  const s = localStorage.getItem('sc_cfg');
-  if (s) {
-    const c = JSON.parse(s);
-    ['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId']
-      .forEach(k => { const el = document.getElementById('c-'+k.replace('messagingSenderId','msgSenderId')); if(el) el.value = c[k]||''; });
-    document.getElementById('c-msgSenderId').value = c.messagingSenderId||'';
-  }
-  document.getElementById('cfg-modal').classList.add('open');
-}
-function saveCfg() {
-  const cfg = {
-    apiKey:            document.getElementById('c-apiKey').value.trim(),
-    authDomain:        document.getElementById('c-authDomain').value.trim(),
-    projectId:         document.getElementById('c-projectId').value.trim(),
-    storageBucket:     document.getElementById('c-storageBucket').value.trim(),
-    messagingSenderId: document.getElementById('c-msgSenderId').value.trim(),
-    appId:             document.getElementById('c-appId').value.trim()
-  };
-  const e = document.getElementById('cfg-err');
-  if (!cfg.apiKey || !cfg.projectId) { e.textContent = 'API Key and Project ID are required.'; return; }
-  localStorage.setItem('sc_cfg', JSON.stringify(cfg));
-  if (fbInit(cfg)) { document.getElementById('cfg-modal').classList.remove('open'); toast('Firebase connected!','ok'); }
-  else e.textContent = 'Init failed. Check values.';
+    const d = await r.json();
+    if (d.id_token) { FB_TOKEN = d.id_token; FB_REFRESH = d.refresh_token; fbSaveSession(FB_TOKEN, FB_REFRESH, FB_UID, FB_EMAIL); }
+  } catch(e) { console.warn('Token refresh failed:', e); }
 }
 
-// ── AUTH ───────────────────────────────────────────────────
+// ── AUTH REST ──────────────────────────────────────────────
+async function fbSignUp(email, pass) {
+  const r = await fetch(`${FB.authUrl}/accounts:signUp?key=${FB.apiKey}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, password:pass, returnSecureToken:true})
+  });
+  return r.json();
+}
+async function fbSignIn(email, pass) {
+  const r = await fetch(`${FB.authUrl}/accounts:signInWithPassword?key=${FB.apiKey}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({email, password:pass, returnSecureToken:true})
+  });
+  return r.json();
+}
+
+// ── FIRESTORE REST HELPERS ─────────────────────────────────
+function fsDoc(path) {
+  return `${FB.fsUrl}/projects/${FB.projectId}/databases/(default)/documents/${path}`;
+}
+function fsHeaders() {
+  return { 'Content-Type':'application/json', 'Authorization':`Bearer ${FB_TOKEN}` };
+}
+// Convert JS value → Firestore field value
+function toFV(v) {
+  if (typeof v === 'string')  return { stringValue: v };
+  if (typeof v === 'number')  return { integerValue: String(v) };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  return { stringValue: String(v) };
+}
+// Convert Firestore field value → JS
+function fromFV(fv) {
+  if (fv.stringValue  !== undefined) return fv.stringValue;
+  if (fv.integerValue !== undefined) return parseInt(fv.integerValue);
+  if (fv.doubleValue  !== undefined) return parseFloat(fv.doubleValue);
+  if (fv.booleanValue !== undefined) return fv.booleanValue;
+  return null;
+}
+// Convert JS object → Firestore fields map
+function toFields(obj) {
+  const fields = {};
+  for (const [k,v] of Object.entries(obj)) fields[k] = toFV(v);
+  return { fields };
+}
+// Convert Firestore document fields → JS object
+function fromDoc(doc) {
+  const obj = {};
+  for (const [k,v] of Object.entries(doc.fields || {})) obj[k] = fromFV(v);
+  // Extract document ID from name path
+  obj.id = doc.name.split('/').pop();
+  return obj;
+}
+
+// ── FIRESTORE CRUD ─────────────────────────────────────────
+async function fsGet(path) {
+  const r = await fetch(fsDoc(path), { headers: fsHeaders() });
+  return r.json();
+}
+async function fsList(path) {
+  const r = await fetch(fsDoc(path), { headers: fsHeaders() });
+  const d = await r.json();
+  return d.documents || [];
+}
+async function fsSet(path, data) {
+  // Use PATCH to create/overwrite document at exact path
+  const fields = {};
+  for (const [k,v] of Object.entries(data)) fields[k] = toFV(v);
+  const r = await fetch(fsDoc(path), {
+    method: 'PATCH', headers: fsHeaders(),
+    body: JSON.stringify({ fields })
+  });
+  return r.json();
+}
+async function fsAdd(path, data) {
+  // POST to collection to auto-generate ID
+  const fields = {};
+  for (const [k,v] of Object.entries(data)) fields[k] = toFV(v);
+  const r = await fetch(fsDoc(path), {
+    method: 'POST', headers: fsHeaders(),
+    body: JSON.stringify({ fields })
+  });
+  return r.json();
+}
+async function fsDelete(path) {
+  await fetch(fsDoc(path), { method:'DELETE', headers: fsHeaders() });
+}
+
+// ── AUTH UI LOGIC ──────────────────────────────────────────
 let authMode = 'login';
 function setTab(m) {
   authMode = m;
@@ -1284,42 +1365,72 @@ function setTab(m) {
   document.getElementById('a-btn').textContent = m==='login' ? 'Sign In' : 'Create Account';
 }
 async function doAuth() {
-  if (!auth) { toast('Configure Firebase first!','err'); openCfg(); return; }
   const email = document.getElementById('a-email').value.trim();
   const pass  = document.getElementById('a-pass').value;
   const btn   = document.getElementById('a-btn');
   const err   = document.getElementById('auth-err');
   err.textContent = '';
   if (!email || !pass) { err.textContent = 'Enter email and password.'; return; }
+  if (!email.includes('@')) { err.textContent = 'Enter a valid email address.'; return; }
   btn.disabled = true; btn.textContent = 'Please wait...';
   try {
-    if (authMode === 'login') await auth.signInWithEmailAndPassword(email, pass);
-    else                      await auth.createUserWithEmailAndPassword(email, pass);
+    const data = authMode === 'login' ? await fbSignIn(email, pass) : await fbSignUp(email, pass);
+    if (data.error) {
+      const msgs = {
+        'EMAIL_NOT_FOUND':       'No account with that email.',
+        'INVALID_PASSWORD':      'Wrong password.',
+        'INVALID_LOGIN_CREDENTIALS': 'Invalid email or password.',
+        'EMAIL_EXISTS':          'Email already registered.',
+        'WEAK_PASSWORD : Password should be at least 6 characters': 'Password must be 6+ characters.',
+        'TOO_MANY_ATTEMPTS_TRY_LATER': 'Too many attempts. Try later.',
+        'INVALID_EMAIL':         'Invalid email format.'
+      };
+      err.textContent = msgs[data.error.message] || data.error.message;
+      btn.disabled = false;
+      btn.textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
+      return;
+    }
+    // Success
+    fbSaveSession(data.idToken, data.refreshToken, data.localId, email);
+    S.user = { uid: data.localId, email };
+    onLogin();
   } catch(e) {
-    const msgs = {
-      'auth/user-not-found':'No account with that email.',
-      'auth/wrong-password':'Wrong password.',
-      'auth/email-already-in-use':'Email already registered.',
-      'auth/invalid-email':'Invalid email format.',
-      'auth/weak-password':'Password must be 6+ characters.',
-      'auth/invalid-credential':'Invalid email or password.',
-      'auth/too-many-requests':'Too many attempts. Try later.'
-    };
-    err.textContent = msgs[e.code] || e.message;
+    err.textContent = 'Network error. Check your connection.';
     btn.disabled = false;
     btn.textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
   }
 }
 function doLogout() {
   if (S.running) stopTimer(false);
-  auth.signOut();
+  fbClearSession();
+  S.user = null; S.tasks = []; S.schedule = [];
+  showPage('auth');
 }
-function onLogin(u) {
-  document.getElementById('n-user').textContent = u.email.split('@')[0].toUpperCase();
+function onLogin() {
+  document.getElementById('n-user').textContent = (S.user.email.split('@')[0]).toUpperCase();
   showPage('app');
   loadData();
   setTimeout(botWelcome, 700);
 }
+
+// ── RESTORE SESSION ON PAGE LOAD ───────────────────────────
+(function restoreSession() {
+  const saved = localStorage.getItem('fb_session');
+  if (saved) {
+    try {
+      const s = JSON.parse(saved);
+      FB_TOKEN = s.token; FB_REFRESH = s.refresh; FB_UID = s.uid; FB_EMAIL = s.email;
+      S.user = { uid: s.uid, email: s.email };
+      // Silently refresh token first, then show app
+      fbRefreshToken().then(() => {
+        if (FB_TOKEN) { onLogin(); }
+        else { fbClearSession(); showPage('auth'); }
+      }).catch(() => { showPage('auth'); });
+    } catch(e) { showPage('auth'); }
+  } else {
+    showPage('auth');
+  }
+})();
 
 // ── DARK MODE ──────────────────────────────────────────────
 function toggleMode() {
@@ -1351,33 +1462,47 @@ function showPanel(btn) {
   document.getElementById('panel-'+btn.dataset.p).classList.add('active');
 }
 
-// ── FIRESTORE OPS ──────────────────────────────────────────
+// ── FIRESTORE OPS (REST) ──────────────────────────────────
 async function saveTasks() {
-  if (!db || !S.user) return;
-  const ref = db.collection('users').doc(S.user.uid).collection('tasks');
-  const snap = await ref.get();
-  const batch = db.batch();
-  snap.forEach(d => batch.delete(d.ref));
-  S.tasks.forEach(t => batch.set(ref.doc(t.id), { name:t.name, plannedTime:t.plannedTime, difficulty:t.difficulty, status:t.status, order:t.order }));
-  await batch.commit();
+  if (!FB_TOKEN || !FB_UID) return;
+  try {
+    // Delete all existing task docs then rewrite
+    const basePath = `users/${FB_UID}/tasks`;
+    const existing = await fsList(basePath);
+    for (const doc of existing) {
+      const docId = doc.name.split('/').pop();
+      await fsDelete(`${basePath}/${docId}`);
+    }
+    // Write each task as a named document
+    for (const t of S.tasks) {
+      await fsSet(`${basePath}/${t.id}`, {
+        name: t.name, plannedTime: t.plannedTime,
+        difficulty: t.difficulty, status: t.status, order: t.order
+      });
+    }
+  } catch(e) { console.warn('saveTasks error:', e); }
 }
 async function saveSession(taskId, secs) {
-  if (!db || !S.user) return;
-  await db.collection('users').doc(S.user.uid).collection('sessions').add({
-    taskId, startTime: S.timerStart?.toISOString()||new Date().toISOString(),
-    endTime: new Date().toISOString(), actualTime: Math.round(secs/60)
-  });
+  if (!FB_TOKEN || !FB_UID) return;
+  try {
+    await fsAdd(`users/${FB_UID}/sessions`, {
+      taskId,
+      startTime: S.timerStart?.toISOString() || new Date().toISOString(),
+      endTime:   new Date().toISOString(),
+      actualTime: Math.round(secs / 60)
+    });
+  } catch(e) { console.warn('saveSession error:', e); }
 }
 async function loadData() {
-  if (!db || !S.user) return;
+  if (!FB_TOKEN || !FB_UID) return;
   try {
-    const snap = await db.collection('users').doc(S.user.uid).collection('tasks').orderBy('order').get();
-    S.tasks = [];
-    snap.forEach(d => S.tasks.push({ id:d.id, ...d.data() }));
+    const docs = await fsList(`users/${FB_UID}/tasks`);
+    S.tasks = docs.map(doc => fromDoc(doc))
+                  .sort((a,b) => (a.order||0) - (b.order||0));
     renderTasks();
     if (S.schedBuilt || S.tasks.length) renderSchedule();
-    toast('Data loaded','ok');
-  } catch(e) { /* No data yet */ }
+    toast('Data loaded', 'ok');
+  } catch(e) { /* No data yet — silent */ }
 }
 
 // ── TIME HELPERS ───────────────────────────────────────────
